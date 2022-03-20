@@ -1,9 +1,8 @@
 import math
 import os
-import random
 import time
 import warnings
-from contextlib import contextmanager
+
 import cv2
 import numpy as np
 import pandas as pd
@@ -14,31 +13,21 @@ from albumentations import (
     Compose, Normalize, Resize, RandomResizedCrop, HorizontalFlip
 )
 from albumentations.pytorch import ToTensorV2
-from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import GroupKFold
 from torch.cuda.amp import autocast, GradScaler
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, CosineAnnealingLR, ReduceLROnPlateau
 from torch.utils.data import DataLoader, Dataset
 
+from utils import LOGGER, seed_torch, get_score, AverageMeter, asMinutes, timeSince
+
 warnings.filterwarnings('ignore')
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # device = 'cpu'
 
-# ====================================================
-# Directory settings
-# ====================================================
 OUTPUT_DIR = './'
-if not os.path.exists(OUTPUT_DIR):
-    os.makedirs(OUTPUT_DIR)
-
 TRAIN_PATH = '../input/RealTrain/'
-
-train = pd.read_csv(TRAIN_PATH + 'data.csv')
-print(train.head())
-
-
 class CFG:
     debug = False
     print_freq = 10
@@ -46,7 +35,7 @@ class CFG:
     model_name = 'resnext50_32x4d'
     size = 200
     scheduler = 'CosineAnnealingLR'  # ['ReduceLROnPlateau', 'CosineAnnealingLR', 'CosineAnnealingWarmRestarts']
-    epochs = 0
+    epochs = 1
     # factor=0.2 # ReduceLROnPlateau
     # patience=4 # ReduceLROnPlateau
     # eps=1e-6 # ReduceLROnPlateau
@@ -71,65 +60,6 @@ class CFG:
 
 if CFG.debug:
     CFG.epochs = 1
-
-
-# ====================================================
-# Utils
-# ====================================================
-def get_score(y_true, y_pred):
-    # display(y_true)
-    # display(y_pred)
-    scores = []
-    for i in range(y_true.shape[1]):
-        score = roc_auc_score(y_true[:, i], y_pred[:, i])
-        scores.append(score)
-    avg_score = np.mean(scores)
-    return avg_score, scores
-
-
-@contextmanager
-def timer(name):
-    t0 = time.time()
-    LOGGER.info(f'[{name}] start')
-    yield
-    LOGGER.info(f'[{name}] done in {time.time() - t0:.0f} s.')
-
-
-def init_logger(log_file=OUTPUT_DIR + 'train.log'):
-    from logging import getLogger, INFO, FileHandler, Formatter, StreamHandler
-    logger = getLogger(__name__)
-    logger.setLevel(INFO)
-    handler1 = StreamHandler()
-    handler1.setFormatter(Formatter("%(message)s"))
-    handler2 = FileHandler(filename=log_file)
-    handler2.setFormatter(Formatter("%(message)s"))
-    logger.addHandler(handler1)
-    logger.addHandler(handler2)
-    return logger
-
-
-LOGGER = init_logger()
-
-
-def seed_torch(seed=42):
-    random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-
-
-seed_torch(seed=CFG.seed)
-
-folds = train.copy()
-Fold = GroupKFold(n_splits=CFG.n_fold)
-groups = folds['filename'].values
-for n, (train_index, val_index) in enumerate(Fold.split(folds, folds[CFG.target_cols], groups)):
-    folds.loc[val_index, 'fold'] = int(n)
-folds['fold'] = folds['fold'].astype(int)
-print(folds.groupby('fold').size())
-print(folds)
 
 
 # ====================================================
@@ -184,27 +114,13 @@ def get_transforms(*, data):
 
 
 # ====================================================
-# Test
-# ====================================================
-tst_idx = folds[folds['fold'] == CFG.n_fold - 1].index
-
-test_fold = folds.loc[tst_idx].reset_index(drop=True)
-_test_fold = test_fold.copy(deep=True)
-test_dataset = TrainDataset(_test_fold, transform=get_transforms(data='valid'))
-
-folds = folds[folds['fold'].isin([i for i in range(CFG.n_fold - 1)])]
-print(folds.groupby('fold').size())
-print(folds)
-
-
-# ====================================================
 # MODEL
 # ====================================================
 class CustomResNext(nn.Module):
     def __init__(self, model_name='resnext50_32x4d', pretrained=False):
         super().__init__()
         self.model = timm.create_model(model_name, pretrained=False)
-        if (pretrained):
+        if pretrained:
             self.model.load_state_dict(torch.load('../models/resnext50_32x4d_a1h-0146ab0a.pth'))
         n_features = self.model.fc.in_features
         self.model.fc = nn.Linear(n_features, CFG.target_size)
@@ -212,42 +128,6 @@ class CustomResNext(nn.Module):
     def forward(self, x):
         x = self.model(x)
         return x
-
-
-# ====================================================
-# Helper functions
-# ====================================================
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-
-def asMinutes(s):
-    m = math.floor(s / 60)
-    s -= m * 60
-    return '%dm %ds' % (m, s)
-
-
-def timeSince(since, percent):
-    now = time.time()
-    s = now - since
-    es = s / (percent)
-    rs = es - s
-    return '%s (remain %s)' % (asMinutes(s), asMinutes(rs))
 
 
 def train_fn(train_loader, model, criterion, optimizer, epoch, scheduler, device):
@@ -342,26 +222,33 @@ def valid_fn(valid_loader, model, criterion, device):
     return losses.avg, predictions
 
 
+def test_fn(test_loader, model, criterion, device):
+    avg_test_loss, preds = valid_fn(test_loader, model, criterion, device)
+    return avg_test_loss, preds
+
+
 # ====================================================
 # Train loop
 # ====================================================
-def train_loop(folds, fold):
+def train_loop(_train_folds, fold, test_fold):
     LOGGER.info(f"========== fold: {fold} training ==========")
 
     # ====================================================
     # loader
     # ====================================================
-    trn_idx = folds[folds['fold'] != fold].index
-    val_idx = folds[folds['fold'] == fold].index
+    trn_idx = _train_folds[_train_folds['fold'] != fold].index
+    val_idx = _train_folds[_train_folds['fold'] == fold].index
 
-    train_folds = folds.loc[trn_idx].reset_index(drop=True)
-    valid_folds = folds.loc[val_idx].reset_index(drop=True)
+    train_folds = _train_folds.loc[trn_idx].reset_index(drop=True)
+    valid_folds = _train_folds.loc[val_idx].reset_index(drop=True)
     valid_labels = valid_folds[CFG.target_cols].values
 
     train_dataset = TrainDataset(train_folds,
                                  transform=get_transforms(data='train'))
     valid_dataset = TrainDataset(valid_folds,
                                  transform=get_transforms(data='valid'))
+    test_dataset = TrainDataset(test_fold,
+                                transform=get_transforms(data='valid'))
 
     train_loader = DataLoader(train_dataset,
                               batch_size=CFG.batch_size,
@@ -371,6 +258,10 @@ def train_loop(folds, fold):
                               batch_size=CFG.batch_size * 2,
                               shuffle=False,
                               num_workers=CFG.num_workers, pin_memory=True, drop_last=False)
+    test_loader = DataLoader(test_dataset,
+                             batch_size=CFG.batch_size,
+                             shuffle=False,
+                             num_workers=CFG.num_workers, pin_memory=True, drop_last=False)
 
     # ====================================================
     # scheduler
@@ -448,15 +339,11 @@ def train_loop(folds, fold):
         valid_folds[c] = np.nan
     valid_folds[[f'pred_{c}' for c in CFG.target_cols]] = check_point['preds']
 
-    test_loader = DataLoader(test_dataset,
-                             batch_size=CFG.batch_size,
-                             shuffle=False,
-                             num_workers=CFG.num_workers, pin_memory=True, drop_last=False)
-
     # test
-    test_labels = test_fold[CFG.target_cols].values
     model.load_state_dict(check_point['model'])
-    avg_test_loss, preds = valid_fn(test_loader, model, criterion, device)
+    avg_test_loss, preds = test_fn(test_loader, model, criterion, device)
+
+    test_labels = test_fold[CFG.target_cols].values
     score, scores = get_score(test_labels, preds)
 
     LOGGER.info(f"========== fold: {fold} test ==========")
@@ -464,38 +351,3 @@ def train_loop(folds, fold):
     LOGGER.info(f'test: Score: {score:.4f}  Scores: {np.round(scores, decimals=4)}')
 
     return valid_folds
-
-
-# ====================================================
-# main
-# ====================================================
-def main():
-    """
-    Prepare: 1.train  2.folds
-    """
-
-    def get_result(result_df):
-        preds = result_df[[f'pred_{c}' for c in CFG.target_cols]].values
-        labels = result_df[CFG.target_cols].values
-        score, scores = get_score(labels, preds)
-        LOGGER.info(f'Score: {score:<.4f}  Scores: {np.round(scores, decimals=4)}')
-
-    if CFG.train:
-        # train
-        oof_df = pd.DataFrame()
-        for fold in range(CFG.n_fold - 1):
-            if fold in CFG.trn_fold:
-                _oof_df = train_loop(folds, fold)
-                oof_df = pd.concat([oof_df, _oof_df])
-                LOGGER.info(f"========== fold: {fold} result ==========")
-                # display(_oof_df)
-                get_result(_oof_df)
-        # CV result
-        LOGGER.info(f"========== CV ==========")
-        get_result(oof_df)
-        # save result
-        oof_df.to_csv(OUTPUT_DIR + 'oof_df.csv', index=False)
-
-
-if __name__ == '__main__':
-    main()
