@@ -126,7 +126,7 @@ seed_list = [37, 41, 42, 43, 47]
 
 # tumor T1SS T2SS T1 2label randT1 randTumor
 if __name__ == '__main__':
-    for seed in [42]:
+    for seed in seed_list:
         for epochs in range(10, 61, 10):
             Params('tumor', seed, epochs)
             main()
