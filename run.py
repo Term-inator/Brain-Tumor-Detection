@@ -10,20 +10,27 @@ from sklearn.model_selection import GroupKFold
 
 from utils import get_score, seed_torch
 from train import train_loop, set_params
-from logger import init_logger, Logger
+from logger import init_logger, close_logger, Logger
 
 
 class Params:
     n_fold = 4
     trn_fold = [0, 1, 2]
-    output_dir = '../output/'
-    data_path = '../input/'
 
     debug = False
     train = True
 
+    type = None
+    target_cols = None
+    data_path = None
+    output_dir = None
+    seed = None
+
     def __init__(self, type, seed, epochs):
         Params.type = type
+        output_base_path = '../output/'
+        data_base_path = '../input/'
+
         if type == 'tumor' or type == 'T1SS' or type == 'T2SS':
             Params.target_cols = ['label']
         elif type == 'T1':
@@ -32,28 +39,25 @@ class Params:
             Params.target_cols = ['label', 'T1']
 
         if type == 'tumor' or type == 'T1' or type == '2label':
-            Params.data_path += 'RealTrain/'
+            Params.data_path = data_base_path + 'RealTrain/'
         elif type == 'randT1':
-            Params.data_path += 'RealTrainRandomT1/'
+            Params.data_path = data_base_path + 'RealTrainRandomT1/'
         elif type == 'randTumor':
-            Params.data_path += 'RealTrainRandomTumor/'
+            Params.data_path = data_base_path + 'RealTrainRandomTumor/'
         elif type == 'T1SS':
-            Params.data_path += 'T1TrainSameSize/'
+            Params.data_path = data_base_path + 'T1TrainSameSize/'
         elif type == 'T2SS':
-            Params.data_path += 'T2TrainSameSize/'
+            Params.data_path = data_base_path + 'T2TrainSameSize/'
         Params.target_size = len(Params.target_cols)
         Params.seed = seed
         Params.epochs = epochs
-        Params.output_dir += f'{type}_seed{seed}-ep{epochs}/'
+        Params.output_dir = output_base_path + f'{type}_seed{seed}-ep{epochs}/'
         # ====================================================
         # Directory settings
         # ====================================================
         if os.path.exists(Params.output_dir):
             shutil.rmtree(Params.output_dir)
         os.makedirs(Params.output_dir)
-
-        print(Params.target_cols, Params.target_size)
-        print(Params.data_path)
 
 
 if Params.debug:
@@ -121,13 +125,19 @@ def main():
         # save result
         oof_df.to_csv(Params.output_dir + 'result.csv', index=False)
 
+    close_logger()
+
 
 seed_list = [37, 41, 42, 43, 47]
+seeds = [37]
 
 # tumor T1SS T2SS T1 2label randT1 randTumor
 if __name__ == '__main__':
-    for seed in seed_list:
+    for seed in seeds:
         for epochs in range(10, 61, 10):
             Params('tumor', seed, epochs)
+            print(f'target_cols: {Params.target_cols}')
+            print(f'data_path: {Params.data_path}, output_dir: {Params.output_dir}')
+            print(f'seed: {seed}, epochs: {epochs}')
             main()
 
