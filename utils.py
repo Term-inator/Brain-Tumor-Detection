@@ -13,8 +13,6 @@ from contextlib import contextmanager
 
 
 def get_score(y_true, y_pred):
-    # display(y_true)
-    # display(y_pred)
     scores = []
     for i in range(y_true.shape[1]):
         score = roc_auc_score(y_true[:, i], y_pred[:, i])
@@ -87,7 +85,7 @@ def asMinutes(s):
 def timeSince(since, percent):
     now = time.time()
     s = now - since
-    es = s / (percent)
+    es = s / percent
     rs = es - s
     return '%s (remain %s)' % (asMinutes(s), asMinutes(rs))
 

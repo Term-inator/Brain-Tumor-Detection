@@ -1,41 +1,28 @@
-import math
-import os
 import time
 import warnings
 
 import cv2
 import numpy as np
-import pandas as pd
 import timm
 import torch
 import torch.nn as nn
-from albumentations import (
-    Compose, Normalize, Resize, RandomResizedCrop, HorizontalFlip
-)
+from albumentations import Compose, Normalize, Resize, RandomResizedCrop, HorizontalFlip
 from albumentations.pytorch import ToTensorV2
-from sklearn.model_selection import GroupKFold
 from torch.cuda.amp import autocast, GradScaler
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, CosineAnnealingLR, ReduceLROnPlateau
 from torch.utils.data import DataLoader, Dataset
 
-from utils import LOGGER, seed_torch, get_score, AverageMeter, asMinutes, timeSince
+from utils import LOGGER, get_score, AverageMeter, timeSince
 
 warnings.filterwarnings('ignore')
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-# device = 'cpu'
 
-OUTPUT_DIR = './'
-TRAIN_PATH = '../input/RealTrain/'
-class CFG:
-    debug = False
-    print_freq = 10
-    num_workers = 0
+
+class Params:
     model_name = 'resnext50_32x4d'
-    size = 200
     scheduler = 'CosineAnnealingLR'  # ['ReduceLROnPlateau', 'CosineAnnealingLR', 'CosineAnnealingWarmRestarts']
-    epochs = 1
     # factor=0.2 # ReduceLROnPlateau
     # patience=4 # ReduceLROnPlateau
     # eps=1e-6 # ReduceLROnPlateau
@@ -43,23 +30,32 @@ class CFG:
     # T_0=6 # CosineAnnealingWarmRestarts
     lr = 1e-4
     min_lr = 1e-6
-    # batch_size=32
-    batch_size = 2
     weight_decay = 1e-6
     gradient_accumulation_steps = 1
     max_grad_norm = 1000
-    seed = 43
-    target_size = 1
+
+    size = 200
+    batch_size = 2
+    print_freq = 10
+    num_workers = 0
+
     # target_cols=['label', 'T1']
     target_cols = ['label']
     # target_cols=['T1']
-    n_fold = 4
-    trn_fold = [0, 1, 2]
-    train = True
+    target_size = len(target_cols)
+    output_dir = './'
+    data_path = '../input/RealTrain/'
+    seed = 42
+    epochs = 1
 
 
-if CFG.debug:
-    CFG.epochs = 1
+def set_params(params):
+    Params.target_cols = params.target_cols
+    Params.target_size = params.target_size
+    Params.output_dir = params.output_dir
+    Params.data_path = params.data_path
+    Params.seed = params.seed
+    Params.epochs = params.epochs
 
 
 # ====================================================
@@ -69,7 +65,7 @@ class TrainDataset(Dataset):
     def __init__(self, df, transform=None):
         self.df = df
         self.file_names = df['filename'].values
-        self.labels = df[CFG.target_cols].values
+        self.labels = df[Params.target_cols].values
         self.transform = transform
 
     def __len__(self):
@@ -78,7 +74,7 @@ class TrainDataset(Dataset):
     def __getitem__(self, idx):
         file_name = self.file_names[idx]
         label = torch.tensor(self.labels[idx]).float()
-        image = cv2.imread(TRAIN_PATH + 'train/' + file_name)
+        image = cv2.imread(Params.data_path + 'train/' + file_name)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         if self.transform:
             augmented = self.transform(image=image)
@@ -92,8 +88,8 @@ class TrainDataset(Dataset):
 def get_transforms(*, data):
     if data == 'train':
         return Compose([
-            # Resize(CFG.size, CFG.size),
-            RandomResizedCrop(CFG.size, CFG.size, scale=(0.85, 1.0)),
+            Resize(Params.size, Params.size),
+            # RandomResizedCrop(Params.size, Params.size, scale=(0.85, 1.0)),
             HorizontalFlip(p=0.5),
             Normalize(
                 mean=[0.485, 0.456, 0.406],
@@ -104,7 +100,7 @@ def get_transforms(*, data):
 
     elif data == 'valid':
         return Compose([
-            Resize(CFG.size, CFG.size),
+            Resize(Params.size, Params.size),
             Normalize(
                 mean=[0.485, 0.456, 0.406],
                 std=[0.229, 0.224, 0.225],
@@ -123,7 +119,7 @@ class CustomResNext(nn.Module):
         if pretrained:
             self.model.load_state_dict(torch.load('../models/resnext50_32x4d_a1h-0146ab0a.pth'))
         n_features = self.model.fc.in_features
-        self.model.fc = nn.Linear(n_features, CFG.target_size)
+        self.model.fc = nn.Linear(n_features, Params.target_size)
 
     def forward(self, x):
         x = self.model(x)
@@ -151,12 +147,12 @@ def train_fn(train_loader, model, criterion, optimizer, epoch, scheduler, device
             loss = criterion(y_preds, labels)
         # record loss
         losses.update(loss.item(), batch_size)
-        if CFG.gradient_accumulation_steps > 1:
-            loss = loss / CFG.gradient_accumulation_steps
+        if Params.gradient_accumulation_steps > 1:
+            loss = loss / Params.gradient_accumulation_steps
         scaler.scale(loss).backward()
         # loss.backward()
-        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), CFG.max_grad_norm)
-        if (step + 1) % CFG.gradient_accumulation_steps == 0:
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), Params.max_grad_norm)
+        if (step + 1) % Params.gradient_accumulation_steps == 0:
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
@@ -164,20 +160,20 @@ def train_fn(train_loader, model, criterion, optimizer, epoch, scheduler, device
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
-        if step % CFG.print_freq == 0 or step == (len(train_loader) - 1):
-            print('Epoch: [{0}][{1}/{2}] '
-                  'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
-                  'Elapsed {remain:s} '
-                  'Loss: {loss.val:.4f}({loss.avg:.4f}) '
-                  'Grad: {grad_norm:.4f}  '
-                # 'LR: {lr:.6f}  '
-                .format(
-                epoch + 1, step, len(train_loader), batch_time=batch_time,
-                data_time=data_time, loss=losses,
-                remain=timeSince(start, float(step + 1) / len(train_loader)),
-                grad_norm=grad_norm,
-                # lr=scheduler.get_lr()[0],
-            ))
+        if step % Params.print_freq == 0 or step == (len(train_loader) - 1):
+            LOGGER.info('Epoch: [{0}][{1}/{2}] '
+                        'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
+                        'Elapsed {remain:s} '
+                        'Loss: {loss.val:.4f}({loss.avg:.4f}) '
+                        'Grad: {grad_norm:.4f}  '
+                        'LR: {lr:.6f}  '
+                        .format(
+                            epoch + 1, step, len(train_loader), batch_time=batch_time,
+                            data_time=data_time, loss=losses,
+                            remain=timeSince(start, float(step + 1) / len(train_loader)),
+                            grad_norm=grad_norm,
+                            lr=scheduler.get_lr()[0]
+                        ))
     return losses.avg
 
 
@@ -203,21 +199,21 @@ def valid_fn(valid_loader, model, criterion, device):
         losses.update(loss.item(), batch_size)
         # record accuracy
         preds.append(y_preds.sigmoid().to('cpu').numpy())
-        if CFG.gradient_accumulation_steps > 1:
-            loss = loss / CFG.gradient_accumulation_steps
+        if Params.gradient_accumulation_steps > 1:
+            loss = loss / Params.gradient_accumulation_steps
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
-        if step % CFG.print_freq == 0 or step == (len(valid_loader) - 1):
-            print('EVAL: [{0}/{1}] '
-                  'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
-                  'Elapsed {remain:s} '
-                  'Loss: {loss.val:.4f}({loss.avg:.4f}) '
-                .format(
-                step, len(valid_loader), batch_time=batch_time,
-                data_time=data_time, loss=losses,
-                remain=timeSince(start, float(step + 1) / len(valid_loader)),
-            ))
+        if step % Params.print_freq == 0 or step == (len(valid_loader) - 1):
+            LOGGER.info('EVAL: [{0}/{1}] '
+                        'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
+                        'Elapsed {remain:s} '
+                        'Loss: {loss.val:.4f}({loss.avg:.4f}) '
+                        .format(
+                            step, len(valid_loader), batch_time=batch_time,
+                            data_time=data_time, loss=losses,
+                            remain=timeSince(start, float(step + 1) / len(valid_loader)),
+                        ))
     predictions = np.concatenate(preds)
     return losses.avg, predictions
 
@@ -241,7 +237,7 @@ def train_loop(_train_folds, fold, test_fold):
 
     train_folds = _train_folds.loc[trn_idx].reset_index(drop=True)
     valid_folds = _train_folds.loc[val_idx].reset_index(drop=True)
-    valid_labels = valid_folds[CFG.target_cols].values
+    valid_labels = valid_folds[Params.target_cols].values
 
     train_dataset = TrainDataset(train_folds,
                                  transform=get_transforms(data='train'))
@@ -251,38 +247,40 @@ def train_loop(_train_folds, fold, test_fold):
                                 transform=get_transforms(data='valid'))
 
     train_loader = DataLoader(train_dataset,
-                              batch_size=CFG.batch_size,
+                              batch_size=Params.batch_size,
                               shuffle=True,
-                              num_workers=CFG.num_workers, pin_memory=True, drop_last=True)
+                              num_workers=Params.num_workers, pin_memory=True, drop_last=True)
     valid_loader = DataLoader(valid_dataset,
-                              batch_size=CFG.batch_size * 2,
+                              batch_size=Params.batch_size * 2,
                               shuffle=False,
-                              num_workers=CFG.num_workers, pin_memory=True, drop_last=False)
+                              num_workers=Params.num_workers, pin_memory=True, drop_last=False)
     test_loader = DataLoader(test_dataset,
-                             batch_size=CFG.batch_size,
+                             batch_size=Params.batch_size,
                              shuffle=False,
-                             num_workers=CFG.num_workers, pin_memory=True, drop_last=False)
+                             num_workers=Params.num_workers, pin_memory=True, drop_last=False)
 
     # ====================================================
     # scheduler
     # ====================================================
     def get_scheduler(optimizer):
-        if CFG.scheduler == 'ReduceLROnPlateau':
-            scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=CFG.factor, patience=CFG.patience, verbose=True,
-                                          eps=CFG.eps)
-        elif CFG.scheduler == 'CosineAnnealingLR':
-            scheduler = CosineAnnealingLR(optimizer, T_max=CFG.T_max, eta_min=CFG.min_lr, last_epoch=-1)
-        elif CFG.scheduler == 'CosineAnnealingWarmRestarts':
-            scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=CFG.T_0, T_mult=1, eta_min=CFG.min_lr, last_epoch=-1)
+        if Params.scheduler == 'ReduceLROnPlateau':
+            scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=Params.factor, patience=Params.patience,
+                                          verbose=True,
+                                          eps=Params.eps)
+        elif Params.scheduler == 'CosineAnnealingLR':
+            scheduler = CosineAnnealingLR(optimizer, T_max=Params.T_max, eta_min=Params.min_lr, last_epoch=-1)
+        elif Params.scheduler == 'CosineAnnealingWarmRestarts':
+            scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=Params.T_0, T_mult=1, eta_min=Params.min_lr,
+                                                    last_epoch=-1)
         return scheduler
 
     # ====================================================
     # model & optimizer
     # ====================================================
-    model = CustomResNext(CFG.model_name, pretrained=True)
+    model = CustomResNext(Params.model_name, pretrained=True)
     model.to(device)
 
-    optimizer = Adam(model.parameters(), lr=CFG.lr, weight_decay=CFG.weight_decay, amsgrad=False)
+    optimizer = Adam(model.parameters(), lr=Params.lr, weight_decay=Params.weight_decay, amsgrad=False)
     scheduler = get_scheduler(optimizer)
 
     # ====================================================
@@ -292,7 +290,7 @@ def train_loop(_train_folds, fold, test_fold):
     best_score = 0.
     best_loss = np.inf
 
-    for epoch in range(CFG.epochs):
+    for epoch in range(Params.epochs):
 
         start_time = time.time()
 
@@ -332,22 +330,22 @@ def train_loop(_train_folds, fold, test_fold):
             LOGGER.info(f'Epoch {epoch + 1} - Save Best Loss: {best_loss:.4f} Model')
             torch.save({'model': model.state_dict(),
                         'preds': preds},
-                       OUTPUT_DIR + f'{CFG.model_name}_fold{fold}_best.pth')
+                       Params.output_dir + f'{Params.model_name}_fold{fold}_best.pth')
 
-    check_point = torch.load(OUTPUT_DIR + f'{CFG.model_name}_fold{fold}_best.pth')
-    for c in [f'pred_{c}' for c in CFG.target_cols]:
+    check_point = torch.load(Params.output_dir + f'{Params.model_name}_fold{fold}_best.pth')
+    for c in [f'pred_{c}' for c in Params.target_cols]:
         valid_folds[c] = np.nan
-    valid_folds[[f'pred_{c}' for c in CFG.target_cols]] = check_point['preds']
+    valid_folds[[f'pred_{c}' for c in Params.target_cols]] = check_point['preds']
 
     # test
     model.load_state_dict(check_point['model'])
     avg_test_loss, preds = test_fn(test_loader, model, criterion, device)
 
-    test_labels = test_fold[CFG.target_cols].values
-    score, scores = get_score(test_labels, preds)
+    test_labels = test_fold[Params.target_cols].values
+    test_score, test_scores = get_score(test_labels, preds)
 
     LOGGER.info(f"========== fold: {fold} test ==========")
-    LOGGER.info(f'test: avg_val_loss: {avg_test_loss:.4f}')
-    LOGGER.info(f'test: Score: {score:.4f}  Scores: {np.round(scores, decimals=4)}')
+    LOGGER.info(f'avg_val_loss: {avg_test_loss:.4f}')
+    LOGGER.info(f'Score: {test_score:.4f}  Scores: {np.round(test_scores, decimals=4)}')
 
-    return valid_folds
+    return valid_folds, test_scores
