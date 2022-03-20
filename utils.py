@@ -5,11 +5,12 @@ import math
 import os
 import random
 import time
+from contextlib import contextmanager
 
 import numpy as np
 import torch
 from sklearn.metrics import roc_auc_score
-from contextlib import contextmanager
+from logger import Logger
 
 
 def get_score(y_true, y_pred):
@@ -24,22 +25,9 @@ def get_score(y_true, y_pred):
 @contextmanager
 def timer(name):
     t0 = time.time()
-    LOGGER.info(f'[{name}] start')
+    Logger().info(f'[{name}] start')
     yield
-    LOGGER.info(f'[{name}] done in {time.time() - t0:.0f} s.')
-
-
-def init_logger(log_file='./train.log'):
-    from logging import getLogger, INFO, FileHandler, Formatter, StreamHandler
-    logger = getLogger(__name__)
-    logger.setLevel(INFO)
-    handler1 = StreamHandler()
-    handler1.setFormatter(Formatter("%(message)s"))
-    handler2 = FileHandler(filename=log_file)
-    handler2.setFormatter(Formatter("%(message)s"))
-    logger.addHandler(handler1)
-    logger.addHandler(handler2)
-    return logger
+    Logger().info(f'[{name}] done in {time.time() - t0:.0f} s.')
 
 
 def seed_torch(seed=42):
@@ -49,9 +37,6 @@ def seed_torch(seed=42):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
-
-
-LOGGER = init_logger()
 
 
 # ====================================================

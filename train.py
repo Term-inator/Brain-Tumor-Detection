@@ -13,7 +13,8 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, CosineAnnealingLR, ReduceLROnPlateau
 from torch.utils.data import DataLoader, Dataset
 
-from utils import LOGGER, get_score, AverageMeter, timeSince
+from utils import get_score, AverageMeter, timeSince
+from logger import Logger
 
 warnings.filterwarnings('ignore')
 
@@ -161,19 +162,18 @@ def train_fn(train_loader, model, criterion, optimizer, epoch, scheduler, device
         batch_time.update(time.time() - end)
         end = time.time()
         if step % Params.print_freq == 0 or step == (len(train_loader) - 1):
-            LOGGER.info('Epoch: [{0}][{1}/{2}] '
-                        'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
-                        'Elapsed {remain:s} '
-                        'Loss: {loss.val:.4f}({loss.avg:.4f}) '
-                        'Grad: {grad_norm:.4f}  '
-                        'LR: {lr:.6f}  '
-                        .format(
-                            epoch + 1, step, len(train_loader), batch_time=batch_time,
-                            data_time=data_time, loss=losses,
-                            remain=timeSince(start, float(step + 1) / len(train_loader)),
-                            grad_norm=grad_norm,
-                            lr=scheduler.get_lr()[0]
-                        ))
+            Logger().info('Epoch: [{0}][{1}/{2}] '
+                          'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
+                          'Elapsed {remain:s} '
+                          'Loss: {loss.val:.4f}({loss.avg:.4f}) '
+                          'Grad: {grad_norm:.4f}  '
+                          'LR: {lr:.6f}  '.format(
+                                epoch + 1, step, len(train_loader), batch_time=batch_time,
+                                data_time=data_time, loss=losses,
+                                remain=timeSince(start, float(step + 1) / len(train_loader)),
+                                grad_norm=grad_norm,
+                                lr=scheduler.get_lr()[0]
+                            ))
     return losses.avg
 
 
@@ -205,15 +205,14 @@ def valid_fn(valid_loader, model, criterion, device):
         batch_time.update(time.time() - end)
         end = time.time()
         if step % Params.print_freq == 0 or step == (len(valid_loader) - 1):
-            LOGGER.info('EVAL: [{0}/{1}] '
-                        'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
-                        'Elapsed {remain:s} '
-                        'Loss: {loss.val:.4f}({loss.avg:.4f}) '
-                        .format(
-                            step, len(valid_loader), batch_time=batch_time,
-                            data_time=data_time, loss=losses,
-                            remain=timeSince(start, float(step + 1) / len(valid_loader)),
-                        ))
+            Logger().info('EVAL: [{0}/{1}] '
+                          'Data {data_time.val:.3f} ({data_time.avg:.3f}) '
+                          'Elapsed {remain:s} '
+                          'Loss: {loss.val:.4f}({loss.avg:.4f}) '.format(
+                                step, len(valid_loader), batch_time=batch_time,
+                                data_time=data_time, loss=losses,
+                                remain=timeSince(start, float(step + 1) / len(valid_loader))
+                            ))
     predictions = np.concatenate(preds)
     return losses.avg, predictions
 
@@ -227,7 +226,7 @@ def test_fn(test_loader, model, criterion, device):
 # Train loop
 # ====================================================
 def train_loop(_train_folds, fold, test_fold):
-    LOGGER.info(f"========== fold: {fold} training ==========")
+    Logger().info(f"========== fold: {fold} training ==========")
 
     # ====================================================
     # loader
@@ -312,9 +311,9 @@ def train_loop(_train_folds, fold, test_fold):
 
         elapsed = time.time() - start_time
 
-        LOGGER.info(
+        Logger().info(
             f'Epoch {epoch + 1} - avg_train_loss: {avg_loss:.4f}  avg_val_loss: {avg_val_loss:.4f}  time: {elapsed:.0f}s')
-        LOGGER.info(f'Epoch {epoch + 1} - Score: {score:.4f}  Scores: {np.round(scores, decimals=4)}')
+        Logger().info(f'Epoch {epoch + 1} - Score: {score:.4f}  Scores: {np.round(scores, decimals=4)}')
 
         """
         if score > best_score:
@@ -327,7 +326,7 @@ def train_loop(_train_folds, fold, test_fold):
 
         if avg_val_loss < best_loss:
             best_loss = avg_val_loss
-            LOGGER.info(f'Epoch {epoch + 1} - Save Best Loss: {best_loss:.4f} Model')
+            Logger().info(f'Epoch {epoch + 1} - Save Best Loss: {best_loss:.4f} Model')
             torch.save({'model': model.state_dict(),
                         'preds': preds},
                        Params.output_dir + f'{Params.model_name}_fold{fold}_best.pth')
@@ -344,8 +343,8 @@ def train_loop(_train_folds, fold, test_fold):
     test_labels = test_fold[Params.target_cols].values
     test_score, test_scores = get_score(test_labels, preds)
 
-    LOGGER.info(f"========== fold: {fold} test ==========")
-    LOGGER.info(f'avg_val_loss: {avg_test_loss:.4f}')
-    LOGGER.info(f'Score: {test_score:.4f}  Scores: {np.round(test_scores, decimals=4)}')
+    Logger().info(f"========== fold: {fold} test ==========")
+    Logger().info(f'avg_val_loss: {avg_test_loss:.4f}')
+    Logger().info(f'Score: {test_score:.4f}  Scores: {np.round(test_scores, decimals=4)}')
 
     return valid_folds, test_scores
