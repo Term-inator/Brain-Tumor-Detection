@@ -13,6 +13,27 @@ from train import train_loop, set_params
 from logger import init_logger, close_logger, Logger
 
 
+target_cols_map = {
+    'tumor': ['label'],
+    'T1SS': ['label'],
+    'T2SS': ['label'],
+    'T1': ['T1'],
+    '2label': ['label', 'T1'],
+    'randT1': ['label', 'T1'],
+    'randTumor': ['label', 'T1']
+}
+
+data_path_map = {
+    'tumor': 'RealTrain/',
+    'T1SS': 'T1TrainSameSize/',
+    'T2SS': 'T2TrainSameSize/',
+    'T1': 'RealTrain/',
+    '2label': 'RealTrain/',
+    'randT1': 'RealTrainRandomT1/',
+    'randTumor': 'RealTrainRandomTumor/'
+}
+
+
 class Params:
     n_fold = 4
     trn_fold = [0, 1, 2]
@@ -31,23 +52,9 @@ class Params:
         output_base_path = '../output/'
         data_base_path = '../input/'
 
-        if type == 'tumor' or type == 'T1SS' or type == 'T2SS':
-            Params.target_cols = ['label']
-        elif type == 'T1':
-            Params.target_cols = ['T1']
-        elif type == '2label' or type == 'randT1' or type == 'randTumor':
-            Params.target_cols = ['label', 'T1']
+        Params.target_cols = target_cols_map[type]
+        Params.data_path = data_base_path + data_path_map[type]
 
-        if type == 'tumor' or type == 'T1' or type == '2label':
-            Params.data_path = data_base_path + 'RealTrain/'
-        elif type == 'randT1':
-            Params.data_path = data_base_path + 'RealTrainRandomT1/'
-        elif type == 'randTumor':
-            Params.data_path = data_base_path + 'RealTrainRandomTumor/'
-        elif type == 'T1SS':
-            Params.data_path = data_base_path + 'T1TrainSameSize/'
-        elif type == 'T2SS':
-            Params.data_path = data_base_path + 'T2TrainSameSize/'
         Params.target_size = len(Params.target_cols)
         Params.seed = seed
         Params.epochs = epochs
@@ -129,15 +136,17 @@ def main():
 
 
 seed_list = [37, 41, 42, 43, 47]
-seeds = [37]
+seeds = [42]
+type_list = ['tumor', 'T1SS', 'T2SS', 'T1', '2label', 'randT1', 'randTumor']
+types = ['tumor', '2label']
 
-# tumor T1SS T2SS T1 2label randT1 randTumor
 if __name__ == '__main__':
-    for seed in seeds:
-        for epochs in range(10, 61, 10):
-            Params('tumor', seed, epochs)
-            print(f'target_cols: {Params.target_cols}')
-            print(f'data_path: {Params.data_path}, output_dir: {Params.output_dir}')
-            print(f'seed: {seed}, epochs: {epochs}')
-            main()
+    for type in types:
+        for seed in seeds:
+            for epochs in range(10, 61, 10):
+                Params(type, seed, epochs)
+                print(f'target_cols: {Params.target_cols}')
+                print(f'data_path: {Params.data_path}, output_dir: {Params.output_dir}')
+                print(f'seed: {seed}, epochs: {epochs}')
+                main()
 

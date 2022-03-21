@@ -337,7 +337,6 @@ def train_loop(_train_folds, fold, test_fold):
     valid_folds[[f'pred_{c}' for c in Params.target_cols]] = check_point['preds']
 
     # test
-    model.load_state_dict(check_point['model'])
     avg_test_loss, preds = test_fn(test_loader, model, criterion, device)
 
     test_labels = test_fold[Params.target_cols].values
