@@ -136,13 +136,13 @@ def main():
 
 
 seed_list = [37, 41, 42, 43, 47]
-seeds = [42]
+seeds = [41]
 type_list = ['tumor', 'T1SS', 'T2SS', 'T1', '2label', 'randT1', 'randTumor']
-types = ['tumor', '2label']
+types = type_list
 
 if __name__ == '__main__':
-    for type in types:
-        for seed in seeds:
+    for seed in seeds:
+        for type in types:
             for epochs in range(10, 61, 10):
                 Params(type, seed, epochs)
                 print(f'target_cols: {Params.target_cols}')
