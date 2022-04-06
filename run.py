@@ -135,10 +135,10 @@ def main():
     close_logger()
 
 
-seed_list = [37, 41, 42, 43, 47]
-seeds = [41]
+seed_list = [31, 37, 41, 42, 43, 47, 53]
+seeds = [53]
 type_list = ['tumor', 'T1SS', 'T2SS', 'T1', '2label', 'randT1', 'randTumor']
-types = type_list
+types = ['T2SS']
 
 if __name__ == '__main__':
     for seed in seeds:
