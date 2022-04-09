@@ -138,7 +138,7 @@ def main():
 seed_list = [31, 37, 41, 42, 43, 47, 53]
 seeds = [53]
 type_list = ['tumor', 'T1SS', 'T2SS', 'T1', '2label', 'randT1', 'randTumor']
-types = ['T2SS']
+types = ['randTumor']
 
 if __name__ == '__main__':
     for seed in seeds:
